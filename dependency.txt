@@ -1,0 +1,9 @@
+git clone https://github.com/carlk3/no-OS-FatFS-SD-SPI-RPi-Pico.git lib/no-OS-FatFS-SD-SPI-RPi-Pico 
+Remove-Item -Recurse -Force "lib\no-OS-FatFS-SD-SDIO-SPI-RPi-Pico"           
+Remove-Item -Recurse -Force "lib\no-OS-FatFS-SD-SPI-RPi-Pico\FatFs_SPI\ff15\documents"
+Remove-Item "lib\no-OS-FatFS-SD-SPI-RPi-Pico\FatFs_SPI\src\rtc.c"            
+Remove-Item "lib\no-OS-FatFS-SD-SPI-RPi-Pico\FatFs_SPI\ff15\source\diskio.c" 
+
+I think this is all that is needed for the SD library
+
+FFT: git clone https://github.com/ARM-software/CMSIS-DSP.git
