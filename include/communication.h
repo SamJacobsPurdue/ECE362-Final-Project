@@ -8,13 +8,10 @@
 #define I2C1_SDA 26 //define the SDA and SCL pins
 #define I2C1_SCL 27
 
-#define SAMPLE_RATE 8000
-#define BITS_PER_SAMPLE 39.8f
-//#define I2C_BAUDRATE (uint32_t)(SAMPLE_RATE * BITS_PER_SAMPLE)
-
-#define I2C_BAUDRATE 288 * 1000 //testing shark fins
-
-#define SAMPLES_PER_BLOCK 256 //this effects the sampling rate of the output, so at a 256
+#define SAMPLE_RATE 16000
+#define I2C_BAUDRATE 1000 * 1000 //testing shark fins
+#define PWM_SLICE 0
+#define SAMPLES_PER_BLOCK 2048 //this effects the sampling rate of the output, so at a 256
 #define I2C_CMDS_PER_BLOCK (SAMPLES_PER_BLOCK * 2)
 
 

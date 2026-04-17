@@ -4,6 +4,8 @@
 #include "hardware/i2c.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"   
+#include "hardware/pwm.h"
+#include "hardware/clocks.h"
 #include "SD_config.h" 
 
 FATFS fs;
@@ -36,12 +38,19 @@ void start_i2c_dma() {
     dma_chan1 = 11;
     dma_claim_mask((1u << 10) | (1u << 11));
 
+    uint32_t sys_clk = clock_get_hz(clk_sys);
+    uint32_t wrap_value = (sys_clk / (SAMPLE_RATE * 2)) - 1;
+
+    pwm_config p_cfg = pwm_get_default_config();
+    pwm_config_set_wrap(&p_cfg, wrap_value);
+    pwm_init(PWM_SLICE, &p_cfg, true);
+
     // Configure channel 0 properly using SDK
     dma_channel_config c0 = dma_channel_get_default_config(dma_chan0);
     channel_config_set_transfer_data_size(&c0, DMA_SIZE_16);
     channel_config_set_read_increment(&c0, true);
     channel_config_set_write_increment(&c0, false);
-    channel_config_set_dreq(&c0, DREQ_I2C1_TX);
+    channel_config_set_dreq(&c0, DREQ_PWM_WRAP0 + PWM_SLICE);
     channel_config_set_chain_to(&c0, dma_chan1);
 
     dma_channel_configure(
@@ -58,7 +67,7 @@ void start_i2c_dma() {
     channel_config_set_transfer_data_size(&c1, DMA_SIZE_16);
     channel_config_set_read_increment(&c1, true);
     channel_config_set_write_increment(&c1, false);
-    channel_config_set_dreq(&c1, DREQ_I2C1_TX);
+    channel_config_set_dreq(&c1, DREQ_PWM_WRAP0 + PWM_SLICE);
     channel_config_set_chain_to(&c1, dma_chan0);
 
     dma_channel_configure(
@@ -130,73 +139,23 @@ void SD_card_init(){
 
     sleep_ms(100);
 
-    int retries = 5;
-    while (retries > 0) {
-        fr = f_open(&fil, "0:ECE362.wav", FA_READ);
-        if (fr == FR_OK) break;
-        printf("Retrying file open... %d\n", retries);
-        sleep_ms(50);
-        retries--;
-    }
-
-    //fr = f_open(&fil, "0:ECE362.wav", FA_READ);
+    fr = f_open(&fil, "0:ECE362.wav", FA_READ);
     if (fr != FR_OK) {
         printf("Error opening file. Code: %d\n", fr);
         f_unmount("0:");
         while (true);
     }
-    f_lseek(&fil, 512);
+    f_lseek(&fil, 512); //seeks past the 44 byte WAV header
 
 }
 
 void read_audio(int16_t *audio_data, UINT bytes_to_read) {
     UINT bytes_read;
-    FRESULT fr = f_read(&fil, audio_data, bytes_to_read, &bytes_read);
-    if (fr != FR_OK) {
-        printf("Read failed: %d, bytes_read: %u\n", fr, bytes_read);
-    }
+    f_read(&fil, audio_data, bytes_to_read, &bytes_read);
+
     if (bytes_read != bytes_to_read) {
         printf("Short read! Got %u of %u bytes\n", bytes_read, bytes_to_read);
     }
-}
-
-void sd_dummy_clock_flush() {
-    // Define your physical SPI pins
-    uint cs_pin = 17;   
-    uint sck_pin = 18;  
-    uint mosi_pin = 19; 
-
-    // Take manual control of the GPIO pins away from the SPI hardware
-    gpio_init(cs_pin);
-    gpio_init(sck_pin);
-    gpio_init(mosi_pin);
-
-    gpio_set_dir(cs_pin, GPIO_OUT);
-    gpio_set_dir(sck_pin, GPIO_OUT);
-    gpio_set_dir(mosi_pin, GPIO_OUT);
-
-    // 1. Pull CS HIGH (This tells the SD card to ignore incoming commands)
-    gpio_put(cs_pin, 1);
-    
-    // 2. Keep MOSI HIGH (Standard idle state for SPI data lines)
-    gpio_put(mosi_pin, 1);
-
-    // 3. Manually toggle the clock line 100 times
-    // The SD card requires at least 74 clock cycles to fully reset its internal state
-    for (int i = 0; i < 100; i++) {
-        gpio_put(sck_pin, 0);
-        sleep_us(10); // Keep the clock relatively slow
-        gpio_put(sck_pin, 1);
-        sleep_us(10);
-    }
-
-    // 4. Release the pins so the FatFs library can re-initialize them properly
-    gpio_deinit(cs_pin);
-    gpio_deinit(sck_pin);
-    gpio_deinit(mosi_pin);
-    
-    // Give the card a few milliseconds to settle after the flush
-    sleep_ms(10); 
 }
 
 void i2c_bus_recover() {
@@ -242,3 +201,44 @@ void i2c_bus_recover() {
     printf("Bus recovery done\n");
     sleep_ms(10);
 }
+
+
+void sd_dummy_clock_flush() {
+    // Define your physical SPI pins
+    uint cs_pin = 17;   
+    uint sck_pin = 18;  
+    uint mosi_pin = 19; 
+
+    // Take manual control of the GPIO pins away from the SPI hardware
+    gpio_init(cs_pin);
+    gpio_init(sck_pin);
+    gpio_init(mosi_pin);
+
+    gpio_set_dir(cs_pin, GPIO_OUT);
+    gpio_set_dir(sck_pin, GPIO_OUT);
+    gpio_set_dir(mosi_pin, GPIO_OUT);
+
+    // 1. Pull CS HIGH (This tells the SD card to ignore incoming commands)
+    gpio_put(cs_pin, 1);
+    
+    // 2. Keep MOSI HIGH (Standard idle state for SPI data lines)
+    gpio_put(mosi_pin, 1);
+
+    // 3. Manually toggle the clock line 100 times
+    // The SD card requires at least 74 clock cycles to fully reset its internal state
+    for (int i = 0; i < 100; i++) {
+        gpio_put(sck_pin, 0);
+        sleep_us(10); // Keep the clock relatively slow
+        gpio_put(sck_pin, 1);
+        sleep_us(10);
+    }
+
+    // 4. Release the pins so the FatFs library can re-initialize them properly
+    gpio_deinit(cs_pin);
+    gpio_deinit(sck_pin);
+    gpio_deinit(mosi_pin);
+    
+    // Give the card a few milliseconds to settle after the flush
+    sleep_ms(10); 
+}
+
