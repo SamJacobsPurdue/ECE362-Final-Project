@@ -1,13 +1,14 @@
 //////////////////////GITHUB REPOS THAT WE USED//////////////////////////
 //SD Card/SPI: https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
 //WS2812: https://github.com/raspberrypi/pico-examples/blob/master/pio/ws2812/ws2812.pio
+
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/i2c.h"
 #include "hardware/dma.h"
 #include "hardware/spi.h"
-#include "hardware/pwm.h"
+#include "hardware/sync.h"
 #include "LEDS.h"
 #include "communication.h"
 #include "ws2812.pio.h"
@@ -15,7 +16,8 @@
 #define BRIGHTNESS 50
 
 extern FIL fil;
-
+volatile bool playing = true;
+volatile bool skip_track = false;
 
 void core1_tasks(){
     PIO pio = pio0;
@@ -99,18 +101,33 @@ void core1_tasks(){
     }
 }
 
+void play_pause_isr() {
+
+    hw_xor_bits(&dma_hw->ch[dma_chan0].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
+    hw_xor_bits(&dma_hw->ch[dma_chan1].al1_ctrl, DMA_CH1_CTRL_TRIG_EN_BITS);
+    printf("Play State Toggled\n"); 
+}
+
+void play_pause_init(){
+    gpio_init(21);
+    gpio_set_dir(21, GPIO_IN);
+    gpio_pull_down(21); 
+
+    gpio_set_irq_enabled_with_callback(21, GPIO_IRQ_EDGE_RISE, true, &play_pause_isr);
+}
+
 int main() {
     stdio_init_all();
-    sleep_ms(2000);
+    sleep_ms(4000);
 
     UINT bytes_per_block = SAMPLES_PER_BLOCK * sizeof(int16_t); // FatFs needs the size in bytes. 512 16-bit samples = 1024 bytes etc
     int16_t __attribute__((aligned(4))) audio_buffer[SAMPLES_PER_BLOCK];
 
-    i2c_bus_recover(); //might not need
-    sd_dummy_clock_flush(); //might not need
     SD_card_init();
     start_i2c_dma();
 
+    play_pause_init();
+    play_track();
     multicore_launch_core1(core1_tasks); //launches the second core
 
     read_audio(audio_buffer, bytes_per_block); //these 4 function calls prefill the audio buffers, might not need it tbh
@@ -119,9 +136,11 @@ int main() {
     format_audio_for_i2c(audio_buffer, dma_buffer1);
 
     dma_channel_start(dma_chan0); //starts the dma channel for transfers
-    pwm_set_enabled(PWM_SLICE, true); // Start the pwm metronome
+    
+    printf("Playing\n");
 
     while(true){
+
         if (refill_buffer0) {
             refill_buffer0 = false;
             read_audio(audio_buffer, bytes_per_block);
@@ -132,5 +151,7 @@ int main() {
             read_audio(audio_buffer, bytes_per_block);
             format_audio_for_i2c(audio_buffer, dma_buffer1);
         }
+
+        __wfi(); //wait for interrupt (play/pause)
     }
 }

@@ -21,9 +21,19 @@ int dma_chan1;
 volatile bool refill_buffer0 = false;
 volatile bool refill_buffer1 = false;
 
+const char* playlist[] = {
+    "0:tr1.wav", 
+    "0:tr2.wav",     
+    "0:tr3.wav",     
+    "0:tr4.wav",
+    "0:tr5.wav",
+};
+
+int current_track = 0;
+
+
 
 void start_i2c_dma() {
-    i2c_bus_recover();
     i2c_init(i2c1, I2C_BAUDRATE);
     gpio_set_function(I2C1_SCL, GPIO_FUNC_I2C);
     gpio_set_function(I2C1_SDA, GPIO_FUNC_I2C);
@@ -31,35 +41,28 @@ void start_i2c_dma() {
     gpio_pull_up(I2C1_SDA);
 
     i2c1_hw->enable = 0;
-    i2c1_hw->tar = I2C_ADDR;  // 0x60
+    i2c1_hw->tar = I2C_ADDR;  // 0x60 (Double check your board isn't 0x61 or 0x62!)
     i2c1_hw->enable = 1;
 
     dma_chan0 = 10;
     dma_chan1 = 11;
     dma_claim_mask((1u << 10) | (1u << 11));
 
-    uint32_t sys_clk = clock_get_hz(clk_sys);
-    uint32_t wrap_value = (sys_clk / (SAMPLE_RATE * 2)) - 1;
-
-    pwm_config p_cfg = pwm_get_default_config();
-    pwm_config_set_wrap(&p_cfg, wrap_value);
-    pwm_init(PWM_SLICE, &p_cfg, true);
-
-    // Configure channel 0 properly using SDK
+    // Configure channel 0
     dma_channel_config c0 = dma_channel_get_default_config(dma_chan0);
     channel_config_set_transfer_data_size(&c0, DMA_SIZE_16);
     channel_config_set_read_increment(&c0, true);
     channel_config_set_write_increment(&c0, false);
-    channel_config_set_dreq(&c0, DREQ_PWM_WRAP0 + PWM_SLICE);
+    channel_config_set_dreq(&c0, DREQ_I2C1_TX); // Trigger off I2C hardware
     channel_config_set_chain_to(&c0, dma_chan1);
 
     dma_channel_configure(
         dma_chan0,
         &c0,
-        &i2c1_hw->data_cmd,  // write to I2C data register
-        dma_buffer0,          // read from buffer 0
-        I2C_CMDS_PER_BLOCK,  // number of transfers
-        false                 // don't start yet
+        &i2c1_hw->data_cmd,  
+        dma_buffer0,          
+        I2C_CMDS_PER_BLOCK,  
+        false                 
     );
 
     // Configure channel 1
@@ -67,7 +70,7 @@ void start_i2c_dma() {
     channel_config_set_transfer_data_size(&c1, DMA_SIZE_16);
     channel_config_set_read_increment(&c1, true);
     channel_config_set_write_increment(&c1, false);
-    channel_config_set_dreq(&c1, DREQ_PWM_WRAP0 + PWM_SLICE);
+    channel_config_set_dreq(&c1, DREQ_I2C1_TX); // Trigger off I2C hardware
     channel_config_set_chain_to(&c1, dma_chan0);
 
     dma_channel_configure(
@@ -106,7 +109,6 @@ void format_audio_for_i2c(int16_t *audio_data, uint16_t *target_dma_buf) {
 
 void dma_irq_handler() {
 
-
     if (dma_hw->ints1 & (1u << dma_chan0)) { // Check if Channel 0 is finished
         dma_hw->ints1 = 1u << dma_chan0; // Clear interrupt flag
         dma_channel_set_read_addr(dma_chan0, dma_buffer0, false); // Reset read address for the next time it's triggered
@@ -137,17 +139,35 @@ void SD_card_init(){
     }
     printf("SD card mounted!\n");
 
-    sleep_ms(100);
 
-    fr = f_open(&fil, "0:ECE362.wav", FA_READ);
+}
+
+void play_track(){
+
+    fr = f_open(&fil, playlist[current_track], FA_READ);
+
     if (fr != FR_OK) {
         printf("Error opening file. Code: %d\n", fr);
         f_unmount("0:");
         while (true);
     }
     f_lseek(&fil, 512); //seeks past the 44 byte WAV header
-
 }
+
+/*
+void next_track() {
+    // Increment the track number and wrap around to 0 if at the end
+    current_track++;
+    if (current_track >= 5) {
+        current_track = 0;
+    }
+
+    f_close(&fil);
+    // Play the new track
+    play_track();
+}
+*/
+
 
 void read_audio(int16_t *audio_data, UINT bytes_to_read) {
     UINT bytes_read;
@@ -157,88 +177,3 @@ void read_audio(int16_t *audio_data, UINT bytes_to_read) {
         printf("Short read! Got %u of %u bytes\n", bytes_read, bytes_to_read);
     }
 }
-
-void i2c_bus_recover() {
-    // Take manual control of pins
-    gpio_init(I2C1_SDA);
-    gpio_init(I2C1_SCL);
-    gpio_set_dir(I2C1_SDA, GPIO_OUT);
-    gpio_set_dir(I2C1_SCL, GPIO_OUT);
-    
-    gpio_put(I2C1_SDA, 1);
-    gpio_put(I2C1_SCL, 1);
-    sleep_us(10);
-
-    // Toggle SCL 9 times to clock out stuck byte
-    for (int i = 0; i < 9; i++) {
-        gpio_put(I2C1_SCL, 0);
-        sleep_us(10);
-        gpio_put(I2C1_SCL, 1);
-        sleep_us(10);
-        // Check if SDA released
-        gpio_set_dir(I2C1_SDA, GPIO_IN);
-        if (gpio_get(I2C1_SDA)) {
-            printf("SDA released after %d clocks\n", i + 1);
-            break;
-        }
-        gpio_set_dir(I2C1_SDA, GPIO_OUT);
-        gpio_put(I2C1_SDA, 1);
-    }
-
-    // Send STOP condition
-    gpio_set_dir(I2C1_SDA, GPIO_OUT);
-    gpio_put(I2C1_SDA, 0);
-    sleep_us(10);
-    gpio_put(I2C1_SCL, 1);
-    sleep_us(10);
-    gpio_put(I2C1_SDA, 1);
-    sleep_us(10);
-
-    // Release pins back to I2C
-    gpio_deinit(I2C1_SDA);
-    gpio_deinit(I2C1_SCL);
-    
-    printf("Bus recovery done\n");
-    sleep_ms(10);
-}
-
-
-void sd_dummy_clock_flush() {
-    // Define your physical SPI pins
-    uint cs_pin = 17;   
-    uint sck_pin = 18;  
-    uint mosi_pin = 19; 
-
-    // Take manual control of the GPIO pins away from the SPI hardware
-    gpio_init(cs_pin);
-    gpio_init(sck_pin);
-    gpio_init(mosi_pin);
-
-    gpio_set_dir(cs_pin, GPIO_OUT);
-    gpio_set_dir(sck_pin, GPIO_OUT);
-    gpio_set_dir(mosi_pin, GPIO_OUT);
-
-    // 1. Pull CS HIGH (This tells the SD card to ignore incoming commands)
-    gpio_put(cs_pin, 1);
-    
-    // 2. Keep MOSI HIGH (Standard idle state for SPI data lines)
-    gpio_put(mosi_pin, 1);
-
-    // 3. Manually toggle the clock line 100 times
-    // The SD card requires at least 74 clock cycles to fully reset its internal state
-    for (int i = 0; i < 100; i++) {
-        gpio_put(sck_pin, 0);
-        sleep_us(10); // Keep the clock relatively slow
-        gpio_put(sck_pin, 1);
-        sleep_us(10);
-    }
-
-    // 4. Release the pins so the FatFs library can re-initialize them properly
-    gpio_deinit(cs_pin);
-    gpio_deinit(sck_pin);
-    gpio_deinit(mosi_pin);
-    
-    // Give the card a few milliseconds to settle after the flush
-    sleep_ms(10); 
-}
-

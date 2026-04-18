@@ -8,10 +8,17 @@
 #define I2C1_SDA 26 //define the SDA and SCL pins
 #define I2C1_SCL 27
 
-#define SAMPLE_RATE 16000
-#define I2C_BAUDRATE 1000 * 1000 //testing shark fins
+
+
+
+//425kHz for 22k files or 12k
+//8192 samples per block I think lower sounds better tho?
+
+//305 kHz for 16k files
+
+#define I2C_BAUDRATE 305 * 1000
 #define PWM_SLICE 0
-#define SAMPLES_PER_BLOCK 2048 //this effects the sampling rate of the output, so at a 256
+#define SAMPLES_PER_BLOCK 256
 #define I2C_CMDS_PER_BLOCK (SAMPLES_PER_BLOCK * 2)
 
 
@@ -32,8 +39,8 @@ void dma_irq_handler(void);
 
 void SD_card_init(void);
 
+void play_track(void);
+
+//void next_track(void);
+
 void read_audio(int16_t *audio_data, UINT bytes_to_read);
-
-void sd_dummy_clock_flush(void);
-
-void i2c_bus_recover();
