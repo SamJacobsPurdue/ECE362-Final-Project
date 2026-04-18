@@ -41,6 +41,6 @@ void SD_card_init(void);
 
 void play_track(void);
 
-//void next_track(void);
+void next_track(void);
 
 void read_audio(int16_t *audio_data, UINT bytes_to_read);

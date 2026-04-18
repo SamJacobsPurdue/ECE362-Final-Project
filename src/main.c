@@ -16,7 +16,6 @@
 #define BRIGHTNESS 50
 
 extern FIL fil;
-volatile bool playing = true;
 volatile bool skip_track = false;
 
 void core1_tasks(){
@@ -101,19 +100,38 @@ void core1_tasks(){
     }
 }
 
-void play_pause_isr() {
+void play_pause_skip_isr(uint gpio, uint32_t events) {
+    static uint32_t last_press = 0;
+    uint32_t now = time_us_32();
 
-    hw_xor_bits(&dma_hw->ch[dma_chan0].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
-    hw_xor_bits(&dma_hw->ch[dma_chan1].al1_ctrl, DMA_CH1_CTRL_TRIG_EN_BITS);
-    printf("Play State Toggled\n"); 
+    if(gpio == 21){
+        if(now - last_press > 200000){
+            hw_xor_bits(&dma_hw->ch[dma_chan0].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
+            hw_xor_bits(&dma_hw->ch[dma_chan1].al1_ctrl, DMA_CH1_CTRL_TRIG_EN_BITS); 
+            hw_xor_bits(&i2c1_hw->dma_cr, I2C_IC_DMA_CR_TDMAE_BITS);
+            last_press = now;
+        }
+        
+    } else if(gpio == 10){
+
+        if (now - last_press > 500000) {  // 500ms debounce
+            skip_track = true;
+            last_press = now;
+        }
+    }
 }
 
-void play_pause_init(){
+void play_pause_skip_init(){
     gpio_init(21);
     gpio_set_dir(21, GPIO_IN);
     gpio_pull_down(21); 
 
-    gpio_set_irq_enabled_with_callback(21, GPIO_IRQ_EDGE_RISE, true, &play_pause_isr);
+    gpio_init(10);
+    gpio_set_dir(10, GPIO_IN);
+    gpio_pull_down(10); 
+
+    gpio_set_irq_enabled_with_callback(21, GPIO_IRQ_EDGE_RISE, true, &play_pause_skip_isr);
+    gpio_set_irq_enabled(10, GPIO_IRQ_EDGE_RISE, true);
 }
 
 int main() {
@@ -126,7 +144,7 @@ int main() {
     SD_card_init();
     start_i2c_dma();
 
-    play_pause_init();
+    play_pause_skip_init();
     play_track();
     multicore_launch_core1(core1_tasks); //launches the second core
 
@@ -140,6 +158,19 @@ int main() {
     printf("Playing\n");
 
     while(true){
+
+        if (skip_track) {
+            skip_track = false;
+            hw_xor_bits(&dma_hw->ch[dma_chan0].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
+            hw_xor_bits(&dma_hw->ch[dma_chan1].al1_ctrl, DMA_CH1_CTRL_TRIG_EN_BITS);
+            next_track();
+            read_audio(audio_buffer, bytes_per_block);
+            format_audio_for_i2c(audio_buffer, dma_buffer0);
+            read_audio(audio_buffer, bytes_per_block);
+            format_audio_for_i2c(audio_buffer, dma_buffer1);
+            hw_xor_bits(&dma_hw->ch[dma_chan0].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
+            hw_xor_bits(&dma_hw->ch[dma_chan1].al1_ctrl, DMA_CH1_CTRL_TRIG_EN_BITS);
+        }
 
         if (refill_buffer0) {
             refill_buffer0 = false;

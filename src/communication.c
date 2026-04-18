@@ -154,7 +154,7 @@ void play_track(){
     f_lseek(&fil, 512); //seeks past the 44 byte WAV header
 }
 
-/*
+
 void next_track() {
     // Increment the track number and wrap around to 0 if at the end
     current_track++;
@@ -163,10 +163,9 @@ void next_track() {
     }
 
     f_close(&fil);
-    // Play the new track
     play_track();
 }
-*/
+
 
 
 void read_audio(int16_t *audio_data, UINT bytes_to_read) {
